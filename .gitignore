@@ -4,8 +4,10 @@
 __pycache__
 vis_results
 checkpoints
+*_traj
 **/*/.pth
 **/*/.pt
 **/*/.mp4
 **/*/.npy
 models/monoD/zoeDepth/ckpts/*
+assets/sintel*
