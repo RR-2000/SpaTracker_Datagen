@@ -123,8 +123,6 @@ def read_cam_kubric(sequence :str, idx :int):
     # Change the intrinsics to the format
     w, h = meta['metadata']["resolution"]
     intrinsics = np.diag([w, h, 1]) @ intrinsics @ np.diag([1, -1, -1])
-    print(intrinsics)
-    print(extrinsics)
 
     depth = read_images_from_directory(os.path.join(sequence, f'view_{idx}'), prefix='depth_')
 
