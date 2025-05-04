@@ -4,6 +4,8 @@ import warnings
 import json
 import os
 from PIL import Image
+import imageio
+import pathlib
 
 
 def pixel_xy_and_camera_z_to_world_space(pixel_xy, camera_z, intrs_inv, extrs_inv):
@@ -29,20 +31,44 @@ def pixel_xy_and_camera_z_to_world_space(pixel_xy, camera_z, intrs_inv, extrs_in
     assert world_xyz.shape == (num_frames, num_points, 3)
     return world_xyz
 
+def depth_from_euclidean_to_z(depth, sensor_width, focal_length):
+        n_frames, h, w = depth.shape
+        sensor_height = sensor_width / w * h
+        pixel_centers_x = (np.arange(-w / 2, w / 2, dtype=np.float32) + 0.5) / w * sensor_width
+        pixel_centers_y = (np.arange(-h / 2, h / 2, dtype=np.float32) + 0.5) / h * sensor_height
+
+        # Calculate squared distance from the center of the image
+        pixel_centers_x, pixel_centers_y = np.meshgrid(pixel_centers_x, pixel_centers_y, indexing="xy")
+        squared_distance_from_center = np.square(pixel_centers_x) + np.square(pixel_centers_y)
+
+        # Calculate rescaling factor for each pixel
+        z_to_eucl_rescaling = np.sqrt(1 + squared_distance_from_center / focal_length ** 2)
+
+        # Apply the rescaling to each depth value
+        # z_to_eucl_rescaling = np.expand_dims(z_to_eucl_rescaling, axis=-1)  # Add a dimension for broadcasting
+        depth_z = depth / z_to_eucl_rescaling
+        return depth_z
+
 def read_images_from_directory(dir :str, prefix = None):
     images = []
     if prefix is None:
         for filename in sorted(os.listdir(dir)):
             filepath = os.path.join(dir, filename)
-            if os.path.isfile(filepath) and filename.lower().endswith(('.png', '.jpg', '.jpeg', '.tiff')):
+            if os.path.isfile(filepath) and filename.lower().endswith(('.png', '.jpg', '.jpeg')):
                 img = np.array(Image.open(filepath))
+                images.append(img)
+            elif os.path.isfile(filepath) and filename.lower().endswith(('.tiff')):
+                img = np.asarray(imageio.v2.imread(pathlib.Path(filepath).read_bytes(), format="tiff"), dtype=np.float64)[:,:, 0]
                 images.append(img)
     else:
         for filename in sorted(os.listdir(dir)):
             if filename.startswith(prefix):
                 filepath = os.path.join(dir, filename)
-                if os.path.isfile(filepath) and filename.lower().endswith(('.png', '.jpg', '.jpeg', '.tiff')):
+                if os.path.isfile(filepath) and filename.lower().endswith(('.png', '.jpg', '.jpeg')):
                     img = np.array(Image.open(filepath))
+                    images.append(img)
+                elif os.path.isfile(filepath) and filename.lower().endswith(('.tiff')):
+                    img = np.asarray(imageio.v2.imread(pathlib.Path(filepath).read_bytes(), format="tiff"), dtype=np.float64)[:,:, 0]
                     images.append(img)
 
     return np.stack(images, axis=0)
@@ -107,6 +133,8 @@ def read_cam_kubric(sequence :str, idx :int):
     cam_ID = idx
     intrinsics = meta['camera']['K']
     extrinsics = meta['camera']['R']
+    sensor_width = meta['camera']['sensor_width']
+    focal_length = meta['camera']['focal_length']
 
     # Extracting the extrinsics Fixed Cams -> only first TS
     positions = torch.tensor(meta['camera']['positions'][0], dtype=torch.float64)
@@ -118,13 +146,14 @@ def read_cam_kubric(sequence :str, idx :int):
     extrinsics_inv[:3, 3] = positions
     extrinsics_inv[3, 3] = 1
     extrinsics = extrinsics_inv.inverse().cpu().numpy()
-    extrinsics[:3, :] = np.diag([1, -1, -1]) @ extrinsics[:3, :]
+    extrinsics = np.diag([1, -1, -1, 1]) @ extrinsics
 
     # Change the intrinsics to the format
     w, h = meta['metadata']["resolution"]
     intrinsics = np.diag([w, h, 1]) @ intrinsics @ np.diag([1, -1, -1])
 
     depth = read_images_from_directory(os.path.join(sequence, f'view_{idx}'), prefix='depth_')
+    depth = depth_from_euclidean_to_z(depth, sensor_width, focal_length)
 
     imgs = read_images_from_directory(os.path.join(sequence, f'view_{idx}'), prefix='rgba_')[..., :3]
 
