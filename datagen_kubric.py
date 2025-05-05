@@ -96,7 +96,7 @@ if __name__ == '__main__':
     # set the arguments
     parser = argparse.ArgumentParser()
     # add the video and segmentation
-    parser.add_argument('--root', type=str, default='/cluster/scratch/rrajaraman/data/kubric_multiview_003/train', help='path to the video')
+    parser.add_argument('--root', type=str, default='/cluster/scratch/rrajaraman/data/kubric_multiview_003/dense', help='path to the video')
     parser.add_argument('--vid_name', type=str, default='1', help='path to the video')
     # set the gpu
     parser.add_argument('--gpu', type=int, default=0, help='gpu id')
@@ -162,6 +162,7 @@ if __name__ == '__main__':
         query_points_cam_frame = np.concatenate(
             [np.zeros((query_points_cam_frame.shape[0], 1)), query_points_cam_frame], axis=-1
         )
+        query_points_cam_frame = torch.tensor(query_points_cam_frame, device='cuda', dtype=torch.float32).unsqueeze(0)
 
         pred_tracks, pred_visibility, T_Firsts = predict_tracks(depth, imgs, downsample, query_frame)
 
@@ -188,18 +189,7 @@ if __name__ == '__main__':
         # Predict Query Points
 
         pred_tracks, pred_visibility, T_Firsts = predict_tracks(depth, imgs, downsample, query_frame, query_points=query_points_cam_frame)
-
-        # Repeat intrinsics to match the first dimension of pred_tracks and convert to torch tensor
-        intrinsics = torch.tensor(
-            np.repeat(np.linalg.inv(intrinsics)[None, ...], pred_tracks.shape[0], axis=0),
-            device=pred_tracks.device, dtype=pred_tracks.dtype
-        )
-        # Repeat extrinsics to match the first dimension of pred_tracks and convert to torch tensor
-        extrinsics = torch.tensor(
-            np.repeat(np.linalg.inv(extrinsics)[None, ...], pred_tracks.shape[0], axis=0),
-            device=pred_tracks.device, dtype=pred_tracks.dtype
-        )
-
+        
         true_traj = pixel_xy_and_camera_z_to_world_space(pred_tracks[..., :2], pred_tracks[..., 2:3],
                                                         intrinsics, extrinsics)
         
