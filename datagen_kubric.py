@@ -26,7 +26,7 @@ from mde import MonoDEst
 #-------- import utils -------------
 from utils.datagen_utils import *
 
-def predict_tracks(depths, images, downsample, query_frame):
+def predict_tracks(depths, images, downsample, query_frame, query_points=None):
     # read the video
     video = torch.from_numpy(images).permute(0, 3, 1, 2)[None].float()
     transform = transforms.Compose([
@@ -77,12 +77,19 @@ def predict_tracks(depths, images, downsample, query_frame):
     pred_tracks, pred_visibility, T_Firsts = (
                                     model(video, video_depth=depths,
                                     grid_size=grid_size, backward_tracking=args.backward,
-                                    depth_predictor=None, grid_query_frame=query_frame,
+                                    depth_predictor=None, grid_query_frame=query_frame, queries=query_points,
                                     segm_mask=torch.from_numpy(segm_mask)[None, None], wind_length=S_lenth)
                                         )
     
         
     return pred_tracks[0], pred_visibility[0], T_Firsts[0]
+
+
+def getSplits(tracks, split: int = 0.5, seed: int = 42):
+    np.random.seed(seed)
+    num_points = tracks.shape[1]
+    split_idx = np.random.permutation(num_points)
+    return tracks[:, split_idx[int(num_points*split):int(num_points*split + 200)],:]
 
 
 if __name__ == '__main__':
@@ -135,13 +142,26 @@ if __name__ == '__main__':
 
     sequence_path = os.path.join(root_dir, args.vid_name)
 
-    num_cams = 10
+    num_cams = 25
 
     query_frame = 0
 
     for idx in tqdm(range(num_cams)):
         # read the camera
         depth, imgs, intrinsics, extrinsics, cam_ID = read_cam_kubric(sequence_path, idx)
+
+        gt_tracks = getSplits(np.load(os.path.join(sequence_path, 'tracks_3d.npz'))['tracks_3d'])
+
+        query_points = gt_tracks[0]
+        # Project query points onto the camera frame using intrinsics and extrinsics
+        query_points_homogeneous = np.concatenate([query_points, np.ones((query_points.shape[0], 1))], axis=-1)
+        query_points_cam_frame = (extrinsics @ query_points_homogeneous.T).T
+        query_points_cam_frame = query_points_cam_frame[:, :3] / query_points_cam_frame[:, 3:4]
+        query_points_cam_frame = (intrinsics @ query_points_cam_frame.T).T
+        query_points_cam_frame = query_points_cam_frame[:, :2] / query_points_cam_frame[:, 2:3]
+        query_points_cam_frame = np.concatenate(
+            [np.zeros((query_points_cam_frame.shape[0], 1)), query_points_cam_frame], axis=-1
+        )
 
         pred_tracks, pred_visibility, T_Firsts = predict_tracks(depth, imgs, downsample, query_frame)
 
@@ -161,17 +181,31 @@ if __name__ == '__main__':
         
         # save the trajectory
         os.path.exists(os.path.join(outdir, args.vid_name)) or os.makedirs(os.path.join(outdir, args.vid_name))
-        np.save(os.path.join(outdir, args.vid_name, f'cam_{cam_ID}_traj.npy'), true_traj.cpu().numpy())
+        np.save(os.path.join(outdir, args.vid_name, f'grid_cam_{cam_ID}_traj.npy'), true_traj.cpu().numpy())
 
-        vis = Visualizer(save_dir=outdir, grayscale=True, 
-                        fps=fps_vis, pad_value=0, linewidth=args.point_size,
-                        tracks_leave_trace=args.len_track)
-        msk_query = (T_Firsts == query_frame)
-        # visualize the all points
-        if args.vis_support:
-            video_vis = vis.visualize(video=video, tracks=pred_tracks[..., :2],
-                                    visibility=pred_visibility,
-                                    filename=args.vid_name+"_spatracker")
+
+
+        # Predict Query Points
+
+        pred_tracks, pred_visibility, T_Firsts = predict_tracks(depth, imgs, downsample, query_frame, query_points=query_points_cam_frame)
+
+        # Repeat intrinsics to match the first dimension of pred_tracks and convert to torch tensor
+        intrinsics = torch.tensor(
+            np.repeat(np.linalg.inv(intrinsics)[None, ...], pred_tracks.shape[0], axis=0),
+            device=pred_tracks.device, dtype=pred_tracks.dtype
+        )
+        # Repeat extrinsics to match the first dimension of pred_tracks and convert to torch tensor
+        extrinsics = torch.tensor(
+            np.repeat(np.linalg.inv(extrinsics)[None, ...], pred_tracks.shape[0], axis=0),
+            device=pred_tracks.device, dtype=pred_tracks.dtype
+        )
+
+        true_traj = pixel_xy_and_camera_z_to_world_space(pred_tracks[..., :2], pred_tracks[..., 2:3],
+                                                        intrinsics, extrinsics)
+        
+        # save the trajectory
+        os.path.exists(os.path.join(outdir, args.vid_name)) or os.makedirs(os.path.join(outdir, args.vid_name))
+        np.save(os.path.join(outdir, args.vid_name, f'query_cam_{cam_ID}_traj.npy'), true_traj.cpu().numpy())
 
 
 

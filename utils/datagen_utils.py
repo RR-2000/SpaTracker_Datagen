@@ -45,7 +45,6 @@ def depth_from_euclidean_to_z(depth, sensor_width, focal_length):
         z_to_eucl_rescaling = np.sqrt(1 + squared_distance_from_center / focal_length ** 2)
 
         # Apply the rescaling to each depth value
-        # z_to_eucl_rescaling = np.expand_dims(z_to_eucl_rescaling, axis=-1)  # Add a dimension for broadcasting
         depth_z = depth / z_to_eucl_rescaling
         return depth_z
 

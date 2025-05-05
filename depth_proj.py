@@ -81,5 +81,5 @@ def depth_only_proj(path: str = '/project/Thesis/kubric-private/output/multiview
     np.savez_compressed(os.path.join(path, f'depths.npz'), *depths)
 
 if __name__ == '__main__':
-    path = '/project/Thesis/kubric-private/output/multiview_25/train/1'
-    depth_only_proj(only_fg=True, train_cams=9, path=path)
+    path = '/project/Thesis/kubric-private/output/multiview_36_v3/train/1'
+    depth_only_proj(only_fg=True, train_cams=20, path=path)
