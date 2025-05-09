@@ -91,6 +91,26 @@ def getSplits(tracks, split: int = 0.5, seed: int = 42):
     split_idx = np.random.permutation(num_points)
     return tracks[:, split_idx[int(num_points*split):int(num_points*split + 200)],:]
 
+def query_cam_select(queried_points, save_dir: str, num_train: int = 20):
+    queried_results = []
+    combined_results = []
+    for cam_ID in range(num_train):
+        queried_results.append(np.expand_dims(np.load(os.path.join(save_dir, f'query_cam_{cam_ID}_traj.npy')), axis = 0))
+
+    queried_results = np.concatenate(queried_results, axis = 0)
+
+    for trackID in range(queried_points.shape[0]):
+        init_dist = np.linalg.norm(queried_results[:,0,trackID] -  queried_points[trackID], axis = -1)
+        best_cam = np.argmin(init_dist, axis = 0)
+        combined_results.append(queried_results[best_cam,:, [trackID]])
+
+    combined_results = np.concatenate(combined_results, axis = 0).transpose(1,0,2)
+
+    np.save(os.path.join(save_dir, f'query_combined.npy'), combined_results)
+
+
+    return
+
 
 if __name__ == '__main__':
     # set the arguments
@@ -146,15 +166,16 @@ if __name__ == '__main__':
 
     query_frame = 0
 
+    gt_tracks = getSplits(np.load(os.path.join(sequence_path, 'tracks_3d.npz'))['tracks_3d'])
+
     for idx in tqdm(range(num_cams)):
         # read the camera
-        depth, imgs, intrinsics, extrinsics, cam_ID = read_cam_kubric(sequence_path, idx)
-
-        gt_tracks = getSplits(np.load(os.path.join(sequence_path, 'tracks_3d.npz'))['tracks_3d'])
+        depth, imgs, intrinsics, extrinsics, cam_ID = read_cam_kubric(sequence_path, idx, False)
 
         query_points = gt_tracks[0]
         # Project query points onto the camera frame using intrinsics and extrinsics
         query_points_homogeneous = np.concatenate([query_points, np.ones((query_points.shape[0], 1))], axis=-1)
+
         query_points_cam_frame = (extrinsics @ query_points_homogeneous.T).T
         query_points_cam_frame = query_points_cam_frame[:, :3] / query_points_cam_frame[:, 3:4]
         query_points_cam_frame = (intrinsics @ query_points_cam_frame.T).T
@@ -187,6 +208,7 @@ if __name__ == '__main__':
 
 
         # Predict Query Points
+        # depth, imgs, intrinsics, extrinsics, cam_ID = read_cam_kubric(sequence_path, idx, False)
 
         pred_tracks, pred_visibility, T_Firsts = predict_tracks(depth, imgs, downsample, query_frame, query_points=query_points_cam_frame)
         
@@ -196,6 +218,8 @@ if __name__ == '__main__':
         # save the trajectory
         os.path.exists(os.path.join(outdir, args.vid_name)) or os.makedirs(os.path.join(outdir, args.vid_name))
         np.save(os.path.join(outdir, args.vid_name, f'query_cam_{cam_ID}_traj.npy'), true_traj.cpu().numpy())
+    
+    query_cam_select(gt_tracks[0], save_dir = os.path.join(outdir, args.vid_name), num_train = 20)
 
 
 

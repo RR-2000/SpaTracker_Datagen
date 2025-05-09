@@ -125,7 +125,7 @@ def quaternion_to_rotation_matrix(quaternions):
 
     return R
 
-def read_cam_kubric(sequence :str, idx :int):
+def read_cam_kubric(sequence :str, idx :int, depth_euclid = False, query_points = None):
 
     meta = json.load(open(os.path.join(sequence, f'view_{idx}', 'metadata.json')))
 
@@ -152,7 +152,35 @@ def read_cam_kubric(sequence :str, idx :int):
     intrinsics = np.diag([w, h, 1]) @ intrinsics @ np.diag([1, -1, -1])
 
     depth = read_images_from_directory(os.path.join(sequence, f'view_{idx}'), prefix='depth_')
-    depth = depth_from_euclidean_to_z(depth, sensor_width, focal_length)
+    if query_points is not None:
+        q_depth = np.zeros((depth.shape[0], query_points.shape[1]), dtype=np.float32)
+        for i in range(depth.shape[0]):
+            x = query_points[:, 0]
+            y = query_points[:, 1]
+            x0 = x
+            y0 = y
+            x1 = x0 + 1
+            y1 = y0 + 1
+
+            x0 = torch.clamp(x0, 0, depth.shape[2] - 1)
+            x1 = torch.clamp(x1, 0, depth.shape[2] - 1)
+            y0 = torch.clamp(y0, 0, depth.shape[1] - 1)
+            y1 = torch.clamp(y1, 0, depth.shape[1] - 1)
+
+            Ia = depth[i, y0, x0]
+            Ib = depth[i, y1, x0]
+            Ic = depth[i, y0, x1]
+            Id = depth[i, y1, x1]
+
+            wa = (x1 - x) * (y1 - y)
+            wb = (x1 - x) * (y - y0)
+            wc = (x - x0) * (y1 - y)
+            wd = (x - x0) * (y - y0)
+
+            q_depth[i] = wa * Ia + wb * Ib + wc * Ic + wd * Id
+        depth = q_depth
+    if not depth_euclid:
+        depth = depth_from_euclidean_to_z(depth, sensor_width, focal_length)
 
     imgs = read_images_from_directory(os.path.join(sequence, f'view_{idx}'), prefix='rgba_')[..., :3]
 
