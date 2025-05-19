@@ -4,6 +4,7 @@ import warnings
 import json
 import os
 from PIL import Image
+from scipy.ndimage import gaussian_filter
 import imageio
 import pathlib
 
@@ -125,7 +126,56 @@ def quaternion_to_rotation_matrix(quaternions):
 
     return R
 
-def read_cam_kubric(sequence :str, idx :int, depth_euclid = False, query_points = None):
+def add_depth_noise(depth, noise_type='gaussian', sigma=0.01, outlier_ratio=0.05, max_noise=0.05, smooth_sigma=1.0):
+    """
+    Add noise to depth values with optional 2D smoothing.
+    
+    Args:
+        depth (np.ndarray): Input depth values
+        noise_type (str): Type of noise ('gaussian', 'saltpepper', or 'both')
+        sigma (float): Standard deviation for Gaussian noise
+        outlier_ratio (float): Ratio of outlier pixels for salt and pepper noise
+        max_noise (float): Maximum magnitude of outlier noise
+        smooth_sigma (float): Standard deviation for Gaussian smoothing (set to 0 to disable)
+    
+    Returns:
+        np.ndarray: Depth with added noise
+    """
+    if not isinstance(depth, np.ndarray):
+        depth = np.array(depth)
+    
+    noisy_depth = depth.copy()
+    
+    if noise_type in ['gaussian', 'both']:
+        # Add Gaussian noise
+        noise = np.random.normal(0, sigma, depth.shape)
+        
+        # Smooth the noise in 2D space
+        if smooth_sigma > 0:
+            noise = gaussian_filter(noise, sigma=smooth_sigma)
+        
+        noisy_depth += noise
+    
+    if noise_type in ['saltpepper', 'both']:
+        # Add salt and pepper noise (outliers)
+        mask_shape = depth.shape
+        outlier_mask = np.random.random(mask_shape) < outlier_ratio
+        
+        # Generate outlier noise values
+        outlier_noise = np.random.uniform(-max_noise, max_noise, mask_shape)
+        
+        # Smooth the outlier noise in 2D space
+        if smooth_sigma > 0:
+            outlier_noise = gaussian_filter(outlier_noise, sigma=smooth_sigma)
+        
+        noisy_depth[outlier_mask] += outlier_noise[outlier_mask]
+    
+    # Ensure we don't have negative depth values
+    noisy_depth = np.maximum(noisy_depth, 0)
+    
+    return noisy_depth
+
+def read_cam_kubric(sequence :str, idx :int, depth_euclid = False, query_points = None, noise_sigma: float = None):
 
     meta = json.load(open(os.path.join(sequence, f'view_{idx}', 'metadata.json')))
 
@@ -181,6 +231,21 @@ def read_cam_kubric(sequence :str, idx :int, depth_euclid = False, query_points 
         depth = q_depth
     if not depth_euclid:
         depth = depth_from_euclidean_to_z(depth, sensor_width, focal_length)
+
+    if noise_sigma is not None:
+        depth = add_depth_noise(depth, noise_type='gaussian', sigma=noise_sigma, smooth_sigma=1)
+
+
+    # Add noise to the depth if requested
+    if 'noise' in meta.get('depth_noise', {}):
+        noise_params = meta.get('depth_noise', {})
+        depth = add_depth_noise(
+            depth,
+            noise_type=noise_params.get('type', 'gaussian'),
+            sigma=noise_params.get('sigma', 0.01),
+            outlier_ratio=noise_params.get('outlier_ratio', 0.05),
+            max_noise=noise_params.get('max_noise', 0.05)
+        )
 
     imgs = read_images_from_directory(os.path.join(sequence, f'view_{idx}'), prefix='rgba_')[..., :3]
 

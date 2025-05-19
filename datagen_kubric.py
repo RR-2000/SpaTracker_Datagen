@@ -108,7 +108,116 @@ def query_cam_select(queried_points, save_dir: str, num_train: int = 20):
 
     np.save(os.path.join(save_dir, f'query_combined.npy'), combined_results)
 
+    return
 
+def grid_save(save_dir: str, num_train: int = 20):
+    queried_results = []
+    combined_results = []
+    for cam_ID in range(num_train):
+        combined_results.append(np.load(os.path.join(save_dir, f'grid_cam_{cam_ID}_traj.npy')))
+
+    combined_results = np.concatenate(combined_results, axis = 1)
+
+    np.save(os.path.join(save_dir, f'grid_combined.npy'), combined_results)
+
+    return
+
+def save_query_permutations(queried_points, save_dir: str, num_train: int = 20):
+    """
+    Saves all permutations of combined tracks based on the number of training cameras.
+    
+    Args:
+        queried_points: The original 3D query points
+        save_dir: Directory to save the results
+        num_train: Number of training cameras to consider
+    """
+    # Load all camera trajectories
+    queried_results = []
+    for cam_ID in range(num_train):
+        queried_results.append(np.expand_dims(np.load(os.path.join(save_dir, f'query_cam_{cam_ID}_traj.npy')), axis = 0))
+    
+    queried_results = np.concatenate(queried_results, axis = 0)
+    
+    # Create permutations directory
+    permutations_dir = os.path.join(save_dir, 'query_permutations')
+    os.makedirs(permutations_dir, exist_ok=True)
+    
+    # For each subset size of cameras
+    for subset_size in [1, 2, 3, 4, 6, 8, 12, 16]:
+        # Save a sample of camera combinations (to avoid too many permutations)
+        max_combinations = min(10, int(np.math.comb(num_train, subset_size)))
+        camera_indices = np.array(list(range(num_train)))
+        
+        # Get random combinations of cameras
+        np.random.shuffle(camera_indices)
+        combinations = [camera_indices[:subset_size] for _ in range(max_combinations)]
+        
+        # Process each combination
+        for i, cam_subset in enumerate(combinations):
+            combined_results = []
+            
+            # For each track point
+            for trackID in range(queried_points.shape[0]):
+                # Only consider cameras in the current subset
+                subset_results = queried_results[cam_subset]
+                
+                # Find the camera with minimum distance to the initial point
+                init_dist = np.linalg.norm(subset_results[:,0,trackID] - queried_points[trackID], axis=-1)
+                best_cam_idx = np.argmin(init_dist, axis=0)
+                best_cam = cam_subset[best_cam_idx]
+                
+                combined_results.append(queried_results[best_cam,:,[trackID]])
+            
+            # Format and save the results
+            combined_results = np.concatenate(combined_results, axis=0).transpose(1,0,2)
+            perm_name = f'query_combined_cameras_{subset_size}_{i}_cams_{"-".join(map(str, cam_subset))}.npy'
+            np.save(os.path.join(permutations_dir, perm_name), combined_results)
+    
+    return
+
+def save_all_grid_permutations(save_dir: str, num_train: int = 20):
+    """
+    Saves all permutations of combined grid tracks based on the number of training cameras.
+    
+    Args:
+        save_dir: Directory to save the results
+        num_train: Number of training cameras to consider
+    """
+    # Load all camera grid trajectories
+    grid_results = []
+    for cam_ID in range(num_train):
+        grid_path = os.path.join(save_dir, f'grid_cam_{cam_ID}_traj.npy')
+        if os.path.exists(grid_path):
+            grid_results.append(np.expand_dims(np.load(grid_path), axis=0))
+    
+    if not grid_results:
+        print("No grid trajectories found")
+        return
+        
+    grid_results = np.concatenate(grid_results, axis=0)
+    
+    # Create grid permutations directory
+    grid_permutations_dir = os.path.join(save_dir, 'grid_permutations')
+    os.makedirs(grid_permutations_dir, exist_ok=True)
+    
+    # For each subset size of cameras
+    for subset_size in [1, 2, 3, 4, 6, 8, 12, 16]:
+        # Save a sample of camera combinations (to avoid too many permutations)
+        max_combinations = min(10, int(np.math.comb(num_train, subset_size)))
+        camera_indices = np.array(list(range(num_train)))
+        
+        # Get random combinations of cameras
+        np.random.shuffle(camera_indices)
+        combinations = [camera_indices[:subset_size] for _ in range(max_combinations)]
+        
+        # Process each combination
+        for i, cam_subset in enumerate(combinations):
+            # Format and save the results
+            subset_results =  np.concatenate(grid_results[cam_subset], axis = 1)
+            print(subset_results.shape)
+            perm_name = f'grid_combined_cameras_{subset_size}_{i}_cams_{"-".join(map(str, cam_subset))}.npy'
+            np.save(os.path.join(grid_permutations_dir, perm_name), subset_results)
+    
     return
 
 
@@ -141,8 +250,9 @@ if __name__ == '__main__':
     parser.add_argument('--vis_support', action='store_true', help='whether to visualize the support points')
     # set the visualized point size
     parser.add_argument('--point_size', type=int, default=3, help='point size')
-
-
+    parser.add_argument('--save_permutes', type=bool, default=False, help='flag to save multiple permutations')
+    # set the noise level
+    parser.add_argument('--noise', type=float, default=None, help='gaussian noise level')
     args = parser.parse_args()
 
     fps_vis = args.fps_vis
@@ -151,7 +261,10 @@ if __name__ == '__main__':
     root_dir = args.root
     vid_dir = os.path.join(root_dir, args.vid_name + '.mp4')
     seg_dir = os.path.join(root_dir, args.vid_name + '.png')
-    outdir = args.outdir
+    if args.noise is not None:
+        outdir = os.path.join(args.outdir, args.vid_name, f'noise_{args.noise}')
+    else:
+        outdir = os.path.join(args.outdir, args.vid_name)
     os.path.exists(outdir) or os.makedirs(outdir)
     # set the paras
     grid_size = args.grid_size
@@ -170,7 +283,7 @@ if __name__ == '__main__':
 
     for idx in tqdm(range(num_cams)):
         # read the camera
-        depth, imgs, intrinsics, extrinsics, cam_ID = read_cam_kubric(sequence_path, idx, False)
+        depth, imgs, intrinsics, extrinsics, cam_ID = read_cam_kubric(sequence_path, idx, False, noise_sigma=args.noise)
 
         query_points = gt_tracks[0]
         # Project query points onto the camera frame using intrinsics and extrinsics
@@ -218,10 +331,14 @@ if __name__ == '__main__':
         # save the trajectory
         os.path.exists(os.path.join(outdir, args.vid_name)) or os.makedirs(os.path.join(outdir, args.vid_name))
         np.save(os.path.join(outdir, args.vid_name, f'query_cam_{cam_ID}_traj.npy'), true_traj.cpu().numpy())
-    
+
     query_cam_select(gt_tracks[0], save_dir = os.path.join(outdir, args.vid_name), num_train = 20)
-
-
+    grid_save(save_dir = os.path.join(outdir, args.vid_name), num_train = 20)
+    
+    
+    if args.save_permutes:
+        save_all_grid_permutations(save_dir = os.path.join(outdir, args.vid_name), num_train = 20)
+        save_query_permutations(gt_tracks[0], save_dir = os.path.join(outdir, args.vid_name), num_train = 20)
 
 
 
