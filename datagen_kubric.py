@@ -149,8 +149,7 @@ def save_query_permutations(queried_points, save_dir: str, num_train: int = 20):
         camera_indices = np.array(list(range(num_train)))
         
         # Get random combinations of cameras
-        np.random.shuffle(camera_indices)
-        combinations = [camera_indices[:subset_size] for _ in range(max_combinations)]
+        combinations = [np.random.choice(camera_indices, size=subset_size, replace=False) for _ in range(max_combinations)]
         
         # Process each combination
         for i, cam_subset in enumerate(combinations):
@@ -205,16 +204,14 @@ def save_all_grid_permutations(save_dir: str, num_train: int = 20):
         # Save a sample of camera combinations (to avoid too many permutations)
         max_combinations = min(10, int(np.math.comb(num_train, subset_size)))
         camera_indices = np.array(list(range(num_train)))
-        
+
         # Get random combinations of cameras
-        np.random.shuffle(camera_indices)
-        combinations = [camera_indices[:subset_size] for _ in range(max_combinations)]
+        combinations = [np.random.choice(camera_indices, size=subset_size, replace=False) for _ in range(max_combinations)]
         
         # Process each combination
         for i, cam_subset in enumerate(combinations):
             # Format and save the results
             subset_results =  np.concatenate(grid_results[cam_subset], axis = 1)
-            print(subset_results.shape)
             perm_name = f'grid_combined_cameras_{subset_size}_{i}_cams_{"-".join(map(str, cam_subset))}.npy'
             np.save(os.path.join(grid_permutations_dir, perm_name), subset_results)
     

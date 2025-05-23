@@ -8,6 +8,8 @@ from scipy.ndimage import gaussian_filter
 import imageio
 import pathlib
 
+NOISE_SCALE = 10
+
 
 def pixel_xy_and_camera_z_to_world_space(pixel_xy, camera_z, intrs_inv, extrs_inv):
     num_frames, num_points, _ = pixel_xy.shape
@@ -154,7 +156,7 @@ def add_depth_noise(depth, noise_type='gaussian', sigma=0.01, outlier_ratio=0.05
         if smooth_sigma > 0:
             noise = gaussian_filter(noise, sigma=smooth_sigma)
         
-        noisy_depth += noise
+        noisy_depth += NOISE_SCALE*noise
     
     if noise_type in ['saltpepper', 'both']:
         # Add salt and pepper noise (outliers)
